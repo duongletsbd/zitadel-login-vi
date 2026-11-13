@@ -28,6 +28,7 @@ zitadel-login:
   image: ghcr.io/duongletsbd/zitadel-login-vi:v4.20.2-vi.<N>@sha256:<digest>
   environment:
     LOGIN_DEFAULT_LOCALE: vi              # hard default to Vietnamese (see below)
+    LOGIN_BRAND_NAME: "Your Brand"        # optional, read at runtime (see below)
     ZITADEL_API_URL: http://zitadel:8080
     NEXT_PUBLIC_BASE_PATH: /ui/v2/login   # must match what you built with
     ZITADEL_SERVICE_USER_TOKEN_FILE: /etc/login/login-client.pat
@@ -48,8 +49,8 @@ for the full self-hosting + passkeys playbook.
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Multi-stage: clones `zitadel/zitadel@<ver>`, applies the overlay, builds the Next.js standalone, packages a runtime image mirroring upstream `apps/login/Dockerfile`. |
-| `apply-vi-locale.mjs` | Idempotent, anchor-based source overlay (4 edits). Fails loudly if an upstream anchor moved. |
-| `login_v2_vi_translations.json` | The Vietnamese strings (next-intl namespaced). Copied into the build as `apps/login/locales/vi.json`. Single source of truth — also upload it via the hosted-login-translation API. |
+| `apply-vi-locale.mjs` | Idempotent, anchor-based source overlay (edits 1–6). Fails loudly if an upstream anchor moved. |
+| `login_v2_vi_translations.json` | The Vietnamese strings (next-intl namespaced). Copied into the build as `apps/login/locales/vi.json`. Single source of truth: for `vi` it wins over hosted translations (edit 5), so editing `vi` strings via the hosted-login-translation API has no effect. Contains no product/brand name. |
 | `.github/workflows/build-and-push.yml` | Builds the image and pushes it to GHCR. |
 
 ## Why a rebuild (not a `FROM …zitadel-login` overlay)
@@ -88,11 +89,36 @@ For a **soft** default (respect the browser, fall back to `vi`) remove edit 4 in
 `apply-vi-locale.mjs` and rebuild. For a **Vietnamese-only** UI, trim `LANGS` to
 `[en, vi]`.
 
+## Why hosted translations don't override `vi` (edit 5)
+
+Zitadel core does not know `vi`; `GetHostedLoginTranslation` for `vi` returns core's
+full **English** default set (measured on v4.20.2: 304 keys). Upstream merges hosted
+translations last, which replaced every Vietnamese string with English. Edit 5 merges
+`vi.json` after them **for `vi` only**; other locales keep the upstream order.
+Trade-off: `vi` strings can no longer be customised through Console / the API —
+change `login_v2_vi_translations.json` and rebuild instead.
+
+## Brand name (`LOGIN_BRAND_NAME`, edit 6)
+
+The image names no product. Set `LOGIN_BRAND_NAME` on the container to name yours; it
+is read by the server **per request** (not a `NEXT_PUBLIC_*` variable, not baked at
+build), so one image serves every deployment. It is merged last and overrides only:
+
+| Key | `vi` | `en` |
+| --- | --- | --- |
+| `common.title` (also the page `<title>`) | `Đăng nhập vào {name}` | `Sign in to {name}` |
+| `register.description` | `Tạo tài khoản {name} của bạn.` | `Create your {name} account.` |
+
+Valid value: trimmed, control characters removed, 1–40 characters, no `{ } < >`
+(messages are ICU-formatted; those characters break rendering). Missing or invalid ⇒
+brand-free wording: `vi` "Đăng nhập" / "Tạo tài khoản của bạn.", `en` "Login" /
+"Create your account.". Other locales are untouched.
+
 ## Build it yourself
 
 ```bash
-docker build -t zitadel-login-vi:v4.15.3 \
-  --build-arg ZITADEL_VERSION=v4.15.3 \
+docker build -t zitadel-login-vi:v4.20.2-local \
+  --build-arg ZITADEL_VERSION=v4.20.2 \
   --build-arg NEXT_PUBLIC_BASE_PATH=/ui/v2/login \
   .
 ```
@@ -114,7 +140,7 @@ manually (`workflow_dispatch`) with a `zitadel_version` input.
    or the switcher flips to English.
 4. Sanity-check the image bundled `vi`:
    ```bash
-   docker run --rm --entrypoint sh ghcr.io/duongletsbd/zitadel-login-vi:v4.15.3 \
+   docker run --rm --entrypoint sh ghcr.io/duongletsbd/zitadel-login-vi:v4.20.2-vi.<N>@sha256:<digest> \
      -c 'grep -rl "Chào mừng\|Tiếng Việt" /app/apps/login/.next >/dev/null && echo "vi bundled OK"'
    ```
 
@@ -123,8 +149,8 @@ manually (`workflow_dispatch`) with a `zitadel_version` input.
 Point the service back at the stock image and restart — no other change needed:
 
 ```yaml
-image: ghcr.io/zitadel/zitadel-login:v4.15.3   # or :latest
-# LOGIN_DEFAULT_LOCALE is a no-op on the stock image (no `vi` in LANGS).
+image: ghcr.io/zitadel/zitadel-login:v4.20.2   # same version as core; never :latest
+# LOGIN_DEFAULT_LOCALE and LOGIN_BRAND_NAME are no-ops on the stock image.
 ```
 
 ## Upgrading the pin (future Zitadel bump)
@@ -133,9 +159,9 @@ image: ghcr.io/zitadel/zitadel-login:v4.15.3   # or :latest
 2. Rebuild. If `apply-vi-locale.mjs` throws "anchor not found", the upstream
    `i18n.ts` / `layout.tsx` / `request.ts` moved — update the anchors, then rebuild.
 
-The Zitadel **server** may track `zitadel:latest` while this login image is pinned to
-a source tag (compatible via the shared v2 gRPC API). If a future server bump breaks
-the login gRPC calls, pin the server too.
+Pin the Zitadel **server** to the same release and upgrade both together (core
+first, then this image) — never run `zitadel:latest`. See
+`docs/self-hosted-zitadel-login-passkeys-guide.md` §9.7 and §9.9.
 
 ## License / attribution
 

@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       zitadel_version:
-        description: 'Zitadel release tag to build from (e.g. v4.15.3)'
+        description: 'Zitadel release tag to build from (e.g. v4.20.2)'
         required: true
         default: 'v4.20.2'
 

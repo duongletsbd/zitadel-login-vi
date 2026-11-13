@@ -19,10 +19,10 @@
 # ZITADEL_VERSION to match your Zitadel core.
 #
 # BUILD CONTEXT = this repo root:
-#   docker build -t zitadel-login-vi:v4.15.3 --build-arg ZITADEL_VERSION=v4.15.3 .
+#   docker build -t zitadel-login-vi:v4.20.2-local --build-arg ZITADEL_VERSION=v4.20.2 .
 # ============================================================================
 
-ARG ZITADEL_VERSION=v4.15.3
+ARG ZITADEL_VERSION=v4.20.2
 ARG NODE_VERSION=24
 ARG PNPM_VERSION=10.30.3
 

@@ -1,13 +1,15 @@
 # Self-Hosted Zitadel + Login V2 + Passkeys — Implementation Guide
 
-Portable guide distilled from the Tuệ Tâm migration (Supabase → self-hosted
-Zitadel v4.15.3, Login V2, OIDC for 1 backend + 3 frontends, Google IdP, in-app
-passkey/password self-service). Covers architecture, exact config, the API
-surface used, and **every issue hit + its fix** so the next project skips the pain.
+Portable guide for running self-hosted Zitadel with Login V2 and passkeys behind a
+reverse proxy (OIDC for one backend + several frontends, optional Google IdP, in-app
+passkey/password self-service). Covers architecture, exact config, the API surface
+used, and **every issue hit + its fix** so the next project skips the pain. File
+paths and names in the examples are from an example implementation — adapt them.
 
-Verified stack: Zitadel **v4.15.3**, `ghcr.io/zitadel/zitadel-login:latest`
-(Login V2, Next.js 16), Postgres, Traefik v3, Cloudflare Tunnel, FastAPI backend,
-Flutter (web/PWA) + Next.js frontends.
+Verified stack: Zitadel core **v4.20.2** + this repo's Login V2 image built from
+**v4.20.2** (Next.js 16), Postgres 16, Traefik v3, Cloudflare Tunnel, a Python
+(FastAPI) backend, Flutter (web/PWA) + Next.js frontends. First written against
+v4.15.3; re-checked on **v4.20.2 on 13/11/2026** (see §9.9 for what changed).
 
 ---
 
@@ -33,7 +35,7 @@ a different host per app).
 
 ```yaml
 zitadel:
-  image: ghcr.io/zitadel/zitadel:latest
+  image: ghcr.io/zitadel/zitadel:v4.20.2   # pin; never :latest (see §9.7)
   command: 'start-from-init --masterkey "${MASTERKEY}" --tlsMode external'
   environment:
     ZITADEL_EXTERNALSECURE: "true"      # generate https URLs
@@ -52,6 +54,11 @@ zitadel:
   (Dev workaround: drop the `zitadel` DB + re-init.)
 - After init, copy the generated SA key (`/keys/sa-key.json`) to where the backend
   + bootstrap read it.
+- **Pin the core version and upgrade core + login together.** `:latest` silently
+  moves you across releases that change setup steps, cookies and security
+  behaviour (e.g. 4.18.0 shipped a broken setup step; 4.19.2 signs Login V2
+  cookies). Upgrade order: back up the DB → core → wait for "setup completed" in the
+  log → login image of the same version.
 
 ---
 
@@ -96,12 +103,14 @@ app a user registers through decides their initial role (no blanket default).
 
 Login V2 is a **separate container**; enabling it has THREE parts:
 
-1. **Container** `ghcr.io/zitadel/zitadel-login` with:
+1. **Container** `ghcr.io/zitadel/zitadel-login:<same version as core>` (or this
+   repo's `vi` image, §9) with:
    ```yaml
    ZITADEL_API_URL: http://zitadel:8080           # internal
    NEXT_PUBLIC_BASE_PATH: /ui/v2/login
    ZITADEL_SERVICE_USER_TOKEN_FILE: /etc/login/login-client.pat
    CUSTOM_REQUEST_HEADERS: "x-zitadel-public-host:auth.<d>,Host:auth.<d>"  # outbound→core, so it resolves the instance
+   ZITADEL_SESSION_COOKIE_SECRET: ${ZITADEL_SESSION_COOKIE_SECRET}         # v4.19.5+: required, ≥32 chars (§9.9)
    ```
 2. **Service user** = a machine user with the **`IAM_LOGIN_CLIENT`** role; mint a
    PAT, write to the file mounted above.
@@ -155,14 +164,14 @@ opens a URL your backend builds. List/remove/reset are plain JSON calls.
 | Begin login (debug) | `POST /v2/sessions` then `PATCH /v2/sessions/{id}` with `{challenges:{webAuthN:{domain:"auth.<d>",userVerificationRequirement:"…REQUIRED"}}}` |
 
 Passkey/session endpoints live at `{issuer}/v2/...` (NOT under `/management/v1`);
-password reset is still v1. In this repo the SA wrappers are
-`apps/api/app/clients/zitadel_admin.py` (`create_passkey_registration_link`,
-`list_passkeys`, `remove_passkey`, `recover_password`).
+password reset is still v1. In the example implementation these live in one small
+SA client module (`create_passkey_registration_link`, `list_passkeys`,
+`remove_passkey`, `recover_password`).
 
 ### 7.2 Your backend self-service API (what the clients call)
 Expose a thin, per-user router so clients never touch Zitadel or the Console.
-In this repo: `apps/api/app/routers/security.py`, prefix `/me/security`, guarded by
-the current principal (400 if the session isn't a Zitadel one):
+In the example implementation: one router, prefix `/me/security`, guarded by the
+current principal (400 if the session isn't a Zitadel one):
 
 | Route | Method | Response |
 | --- | --- | --- |
@@ -182,11 +191,11 @@ url = f"{base}/passkey/set?{urlencode(params)}"
 # → https://auth.<d>/ui/v2/login/passkey/set?userId=…&code=…&codeId=…&organization=…
 ```
 
-### 7.3 Flutter clients (member-app + expert-app)
+### 7.3 Flutter clients
 `SecuritySelfService` (static methods) + a `_PasskeySheet` bottom sheet, wired from
-the Profile screen. Files: `apps/{member,expert}-app/lib/core/auth/security_self_service.dart`
-(logic is byte-identical between the two apps — only the SnackBar messenger source
-differs: member uses `ScaffoldMessenger.maybeOf(context)`, expert a global
+the Profile screen (example implementation: one `security_self_service.dart` per app;
+if several apps share it, keep the logic identical and vary only the SnackBar
+messenger source — `ScaffoldMessenger.maybeOf(context)` vs a global
 `rootScaffoldMessengerKey`).
 
 Methods: `addPasskey` (POST link → open URL), `fetchPasskeys` (GET), `deletePasskey`
@@ -206,10 +215,10 @@ final ok = await launchUrl(
 The sheet re-fetches the passkey list on `AppResumed`
 (`didChangeAppLifecycleState`) so a passkey added in the browser appears on return.
 
-### 7.4 Next.js web-admin
-API client `apps/web-admin/src/lib/api/security.ts` (`createPasskeyRegistrationLink`,
-`listPasskeys`, `removePasskey`, `sendPasswordResetEmail` — all via `fetchWithAuth`);
-UI in the "Bảo Mật" card of `apps/web-admin/src/app/(dashboard)/profile/page.tsx`.
+### 7.4 Next.js admin
+A small API client (`createPasskeyRegistrationLink`, `listPasskeys`, `removePasskey`,
+`sendPasswordResetEmail` — all via the app's authenticated fetch) and a "Security"
+card on the profile page.
 
 Web can't use the Flutter `_self` trick (it would navigate away from the admin).
 Instead **open a blank tab synchronously inside the click** (before any `await`, so
@@ -249,22 +258,32 @@ try {
 
 ## 9. Custom Login V2 image (Vietnamese `vi` fork)
 
-Full in-repo reference: `deploy/zitadel-login/` (`Dockerfile`, `apply-vi-locale.mjs`,
-`README.md`) + the strings in `deploy/zitadel/login_v2_vi_translations.json`.
+Reference: this repository — `Dockerfile`, `apply-vi-locale.mjs`, `README.md` and the
+strings in `login_v2_vi_translations.json`.
 
 ### 9.1 Why a custom image is unavoidable for `vi`
-- Login V2 bundles ~14 locales; **Vietnamese is NOT among them, and Zitadel core
-  does NOT list `vi` as a supported instance language** → `PUT
+- Login V2 bundles 15 locales (v4.20.2); **Vietnamese is NOT among them, and Zitadel
+  core does NOT list `vi` as a supported instance language** → `PUT
   /admin/v1/languages/default/vi` returns `400 LANG-lg4DP`. You cannot set `vi` as
   default/allowed (Issue #8).
-- `PUT /v2/settings/hosted_login_translation` accepts a `vi` payload but it's inert
-  without `vi` being a *selectable* locale.
+- **Hosted login translations are NOT harmless for `vi`** (corrected 13/11/2026; an
+  earlier version of this guide said they were inert). Login V2 merges, in order,
+  `en.json` → `<locale>.json` → the hosted translations returned by core's
+  `SettingsService.GetHostedLoginTranslation`, later sources winning. For a locale
+  core doesn't know, core returns its **full English default set** (measured on
+  v4.20.2: `vi` → 304 keys, identical to `en`; `de` → German). So the hosted set
+  overwrote every Vietnamese string and the page rendered in English (Issue #12).
+  Edit 5 (§9.3) merges `vi.json` **after** the hosted set for `vi` only.
+  **Trade-off:** `vi` strings can no longer be changed through Console or
+  `PUT /v2/settings/hosted_login_translation` — edit `login_v2_vi_translations.json`
+  and rebuild. Other locales keep the upstream order.
 
 ⇒ To truly ship a Vietnamese login you must **bake `vi` into a custom Login V2
 image at build time.**
 
 ### 9.2 Why a source rebuild, NOT a `FROM …zitadel-login` overlay
-Two upstream facts (verified on `v4.15.3`) make a runtime overlay impossible:
+Two upstream facts (verified on `v4.15.3`, still true on `v4.20.2`) make a runtime
+overlay impossible:
 1. **Supported locales are a hardcoded `LANGS` array** (`apps/login/src/lib/i18n.ts`).
    The switcher AND the Accept-Language / `NEXT_LOCALE`-cookie gates all key off it.
    In the published image `LANGS` is minified into the server bundle → not patchable.
@@ -274,15 +293,32 @@ Two upstream facts (verified on `v4.15.3`) make a runtime overlay impossible:
 
 So the fork **clones the pinned upstream source, patches it, and rebuilds.**
 
-### 9.3 The overlay — 4 idempotent, anchor-based edits (`apply-vi-locale.mjs`)
+### 9.3 The overlay — 6 idempotent, anchor-based edits (`apply-vi-locale.mjs`)
 Each edit fails **loudly** if its upstream anchor text is gone (the signal to
-re-check the script against a new release tag):
+re-check the script against a new release tag), and skips itself if its marker is
+already present (running the script twice is a no-op):
 1. `apps/login/src/lib/i18n.ts` — add `{name:"Tiếng Việt", code:"vi"}` to `LANGS`.
 2. `apps/login/src/app/(login)/layout.tsx` — **re-add `vi` to the switcher list.**
 3. `apps/login/src/i18n/request.ts` — **re-add `vi` to `allowedLanguages`** + honour
    a `LOGIN_DEFAULT_LOCALE` env var as the base default locale.
 4. `apps/login/src/i18n/request.ts` — when `LOGIN_DEFAULT_LOCALE` is set, do NOT let
    the browser `Accept-Language` override it (hard default; remove for soft default).
+5. `apps/login/src/i18n/request.ts` — **merge order:** for `vi`, merge `vi.json`
+   *after* the hosted translations (§9.1); other locales unchanged.
+6. `apps/login/src/i18n/request.ts` — **runtime brand name.** Reads
+   `LOGIN_BRAND_NAME` on the server per request (not `NEXT_PUBLIC_*`, not baked), and
+   merges it last for `common.title` (also the default page `<title>`) and
+   `register.description`, in `vi` and `en` only:
+   `vi` "Đăng nhập vào {name}" / "Tạo tài khoản {name} của bạn.",
+   `en` "Sign in to {name}" / "Create your {name} account.".
+   Missing or invalid ⇒ brand-free fallback: `vi` "Đăng nhập" / "Tạo tài khoản của
+   bạn.", `en` "Login" / "Create your account.".
+   **Character rule:** trim, strip control characters, 1–40 characters, and reject
+   `{ } < >`. Messages are ICU-formatted by next-intl: those characters render the
+   *key name* (`common.title`) instead of the text whenever a caller passes values,
+   and ICU quoting (`'…'`) breaks the calls that pass none (measured with
+   use-intl 4.15.1). `'` and `#` are safe unquoted. React escapes HTML, so this rule
+   is about rendering, not XSS.
 
 **The real gotcha behind edits 2 & 3 (the intersection):** both files intersect
 `LANGS` with the instance's `getGeneralSettings().allowedLanguages`. That call
@@ -292,23 +328,26 @@ include `vi` — so a bare `LANGS` patch silently drops `vi` again. The fork tre
 instance language setting.
 
 ### 9.4 The Dockerfile (build-time bake)
-Multi-stage, pinned to the exact server release; build context = `deploy/`:
+Multi-stage, pinned to the exact server release; build context = this repo's root
+(abridged — see `Dockerfile`):
 ```dockerfile
-ARG ZITADEL_VERSION=v4.15.3
+ARG ZITADEL_VERSION=v4.20.2
 ARG NEXT_PUBLIC_BASE_PATH=/ui/v2/login   # basePath is baked in — must match the proxy path
 FROM node:24-bookworm-slim AS builder
 RUN git clone --depth 1 --branch ${ZITADEL_VERSION} https://github.com/zitadel/zitadel.git .
-COPY zitadel/login_v2_vi_translations.json apps/login/locales/vi.json   # the strings
-COPY zitadel-login/apply-vi-locale.mjs /tmp/apply-vi-locale.mjs
-RUN node /tmp/apply-vi-locale.mjs                                        # the 4 edits
+COPY login_v2_vi_translations.json apps/login/locales/vi.json   # the strings
+COPY apply-vi-locale.mjs /tmp/apply-vi-locale.mjs
+RUN node /tmp/apply-vi-locale.mjs                                 # edits 1–6
 RUN pnpm install --frozen-lockfile && pnpm exec nx build @zitadel/login  # heavy: proto→client→login
 FROM node:24-alpine AS runtime   # mirrors upstream apps/login/Dockerfile (same user/env/healthcheck)
 COPY --from=builder --chown=nextjs:nodejs /src/apps/login/.next/standalone ./
 ENTRYPOINT ["/app/entrypoint.sh", "node", "apps/login/server.js"]
 ```
-Notes: the `vi.json` is the **single source of truth** — the same file the bootstrap
-uploads via the hosted-login-translation API. `NEXT_PUBLIC_BASE_PATH` is frozen at
-build; change the serve path ⇒ rebuild.
+Notes: `login_v2_vi_translations.json` is the **single source of truth** for `vi`.
+Do **not** also upload it as a hosted translation expecting it to matter: for `vi`
+the bundled file wins (edit 5), so a hosted copy is dead weight that will drift.
+`NEXT_PUBLIC_BASE_PATH` is frozen at build; change the serve path ⇒ rebuild.
+`LOGIN_BRAND_NAME` and `LOGIN_DEFAULT_LOCALE` are read at runtime — no rebuild.
 
 ### 9.5 Locale resolution at runtime (`LOGIN_DEFAULT_LOCALE`)
 Order, after `vi` is re-added to `allowedLanguages`:
@@ -319,51 +358,103 @@ Order, after `vi` is re-added to `allowedLanguages`:
 3. `NEXT_LOCALE` cookie / OIDC `?ui_locales=<code>` — still highest. Switcher choice
    sticks; a client can force English with `?ui_locales=en`.
 
-`LOGIN_DEFAULT_LOCALE=vi` is set in both compose files. For **soft** default (respect
+Set `LOGIN_DEFAULT_LOCALE=vi` on every `zitadel-login` service. For **soft** default (respect
 the browser, fall back to `vi`) remove edit 4 and rebuild. For a **vi-only** UI, trim
 `LANGS` to `[en, vi]`.
 
 ### 9.6 Build / deploy / rollback
 ```bash
-# Build (context = deploy/)
-docker build -f deploy/zitadel-login/Dockerfile \
-  -t tuetam/zitadel-login-vi:v4.15.3 --build-arg ZITADEL_VERSION=v4.15.3 deploy
-# Or via compose (build: block already wired into dev + prod)
-docker compose -f deploy/docker-compose.dev.yml --env-file deploy/.env.dev up -d --build zitadel-login
+# Prebuilt (preferred): CI builds every push and prints the pin in the run summary.
+# Pin the immutable tag WITH its digest — the digest is what Docker actually pulls.
+ZITADEL_LOGIN_IMAGE=ghcr.io/<owner>/zitadel-login-vi:v4.20.2-vi.<N>@sha256:<digest>
+
+# Local build (context = repo root)
+docker build -t zitadel-login-vi:v4.20.2-local --build-arg ZITADEL_VERSION=v4.20.2 .
 ```
-Both compose files point `zitadel-login` at the fork image + `LOGIN_DEFAULT_LOCALE=vi`;
-all other env, the PAT volume, Traefik `/ui/v2/login/*` routing and
-`CUSTOM_REQUEST_HEADERS` are unchanged. **Rollback** = point the service back at
-`ghcr.io/zitadel/zitadel-login:<ver>`, drop the `build:` block, restart — the uploaded
-`vi` hosted-login-translation stays harmless (stock image never selects `vi`).
+- **Tags:** CI writes an immutable `<ver>-vi.<N>` per build (N = run number; the job
+  refuses to overwrite an existing tag) plus a moving `:latest` that is **for browsing
+  only — never deploy it.** Plain `:<ver>` tags are no longer written (Issue #13).
+- Point `zitadel-login` at the image, set `LOGIN_DEFAULT_LOCALE=vi`, optionally
+  `LOGIN_BRAND_NAME`; all other env, the PAT volume, Traefik `/ui/v2/login/*` routing
+  and `CUSTOM_REQUEST_HEADERS` are unchanged. Recreate only that service
+  (`up -d --no-deps --force-recreate zitadel-login`).
+- **Rollback** = point the service at the previous pinned `-vi.<N>@sha256:` (or the
+  stock `ghcr.io/zitadel/zitadel-login:<same ver as core>`, which loses Vietnamese)
+  and recreate it. Login is stateless apart from the signed session cookie — users
+  may have to sign in again; core and its DB are untouched.
 
 Verify: open `https://auth.<d>/ui/v2/login` → renders Vietnamese by default; switcher
-lists "Tiếng Việt"; an English-locale browser still shows Vietnamese; `?ui_locales=en`
-switches to English. Sanity-check the image:
+lists "Tiếng Việt"; an English-locale browser still shows Vietnamese; the cookie
+`NEXT_LOCALE=en` (or `?ui_locales=en`) switches to English. Check that **no English
+string** remains on the Vietnamese pages (Issue #12 renders the language switcher in
+Vietnamese while every string is English — "Tiếng Việt" in the switcher proves
+nothing). Sanity-check the image:
 ```bash
 docker run --rm --entrypoint sh <image> \
   -c 'grep -rl "Chào mừng\|Tiếng Việt" /app/apps/login/.next >/dev/null && echo "vi bundled OK"'
 ```
 
 ### 9.7 Version-pin upgrade (future Zitadel bump)
-1. Bump `ZITADEL_VERSION` in the Dockerfile + both compose `build.args` + the image tag.
-2. Rebuild. If `apply-vi-locale.mjs` throws "anchor not found", upstream `i18n.ts` /
-   `request.ts` / `layout.tsx` moved — update the anchors, then rebuild.
-The **server** may track `zitadel:latest` while the login image is pinned to a source
-tag (compatible via the shared v2 gRPC API); if a future server bump breaks the login
-gRPC calls, pin the server too.
+**Pin both images; upgrade core and login together.** Do not let the server track
+`zitadel:latest`: core releases change setup steps, cookie signing and security
+checks that the login app must match (v4.19.5 even added a required login env var).
+1. Read the release notes + security advisories between your version and the target.
+2. Bump `DEFAULT_ZITADEL_VERSION` (and the dispatch default) in the workflow and the
+   `ARG ZITADEL_VERSION` default in the `Dockerfile`; push ⇒ CI builds
+   `<ver>-vi.<N>`. If `apply-vi-locale.mjs` throws "anchor not found", upstream
+   `i18n.ts` / `request.ts` / `layout.tsx` moved — update the anchors, then rebuild.
+3. Diff `apps/login/locales/en.json` of the new tag against `vi.json`: translate new
+   keys, drop keys the source no longer uses (grep `apps/login/src`, including
+   dynamically built keys).
+4. Back up the core DB (`pg_dump -Fc`, and a raw volume tarball with core stopped).
+5. Core first: bump the core image, start it, wait for `setup completed` +
+   `server is listening` in the log, no `level=error`.
+6. Then login: set `ZITADEL_LOGIN_IMAGE=<…>:<ver>-vi.<N>@sha256:<digest>`, recreate.
+7. Run the §11 checklist, including "no English left on Vietnamese pages".
 
 ### 9.8 Reusing this fork in another project
 The fork is only **3 small files + one JSON of strings** — deliberately portable.
-To reuse across repos, publish them as a standalone artifact (see the "Publishing the
-fork" note where this guide is applied), then in the new project either:
-- **Pull a prebuilt image** — reference `…/zitadel-login-vi:<ver>` in that project's
-  compose (zero rebuild; but the image bakes `NEXT_PUBLIC_BASE_PATH` + version — rebuild
-  if either differs), or
+In the new project either:
+- **Pull a prebuilt image** — reference `…/zitadel-login-vi:<ver>-vi.<N>@sha256:<digest>`
+  in that project's compose (zero rebuild; but the image bakes `NEXT_PUBLIC_BASE_PATH`
+  + version — rebuild if either differs), or
 - **Copy the 3 files** (`Dockerfile`, `apply-vi-locale.mjs`, `*_vi_translations.json`)
   and build locally with that project's own base path / pinned version.
-Nothing in the fork is Tuệ Tâm-specific except the translated strings, which any
-project can reuse or re-translate.
+Nothing in the fork names a product: the brand comes from `LOGIN_BRAND_NAME` at
+runtime (edit 6), so the same image serves any project.
+
+### 9.9 v4.19+ / v4.20 notes (checked on v4.20.2, 13/11/2026)
+- **`ZITADEL_SESSION_COOKIE_SECRET` is required on the login container** (v4.19.5+;
+  it protects passkey setup, verification and invite steps). Generate ≥ 32 random
+  characters (e.g. `openssl rand -base64 48`), keep it **only in the env file /
+  secret store**, use the **same value on every login replica**. Too short ⇒ the
+  login's `/ready` fails. Login cookies are signed since v4.19.2 ⇒ everyone signs in
+  again once after the upgrade.
+- **Block Login V1 (`/ui/login*`) at the proxy.** `loginV2.required=true` does not
+  stop requests to the V1 paths (several 2026 advisories hit V1 only). Measured on
+  v4.20.2 without a block: `/ui/login` → 301, `/ui/login/login` → 302 into Console,
+  i.e. V1 still answers. Traefik rule for the core router:
+  ```yaml
+  zitadel: { rule: "Host(`auth.<d>`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/ui/login`)", … }
+  ```
+  `/ui/login*` then matches no router ⇒ Traefik 404. Do this only after
+  `loginV2.required=true` and after registering the **V2** Google callback (Issue #5).
+  Re-check that Console sign-in still goes through `/ui/v2/login`.
+- **CORS on core reflects any `Origin` with `Access-Control-Allow-Credentials: true`**
+  (`internal/api/http/middleware/cors_interceptor.go`: `AllowOriginFunc` always
+  true). There is **no config option** to restrict it. Restrict it at the proxy if
+  you need to, and measure first whether your proxy's CORS middleware *replaces*
+  core's `Access-Control-Allow-Origin` or only adds a second header.
+- **Phone claim name** is `phone_number` / `phone_number_verified` (scope `phone`,
+  via `/oidc/v1/userinfo` or introspection; `claims_supported` in discovery lists
+  them). Access tokens do not carry it.
+- **Measuring hosted translations from a script:** call
+  `zitadel.settings.v2.SettingsService/GetHostedLoginTranslation` with
+  `{ "instance": true, "locale": "vi" }` and the instance's public host in both
+  `Host` and `x-zitadel-public-host`. Node's `fetch` silently drops a custom `Host`
+  header ⇒ core answers 404 "unable to set instance using origin"; use
+  `http.request`, which keeps it. Read the token from a file inside the process; never
+  echo it.
 
 ---
 
@@ -382,6 +473,9 @@ project can reuse or re-translate.
 | 9 | Web "add passkey" button does nothing | `launchUrl(_blank)` AFTER an `await` → browser popup blocker (gesture lost). | On web open same-tab (`_self`); native uses external browser. |
 | 10 | Whole stack 502 after Docker Desktop restart | Docker Desktop host port-forwards go stale (TCP accepts, data dropped mid-handshake) — affects Traefik AND Postgres/pgbouncer. | `docker compose up -d --force-recreate traefik postgres pgbouncer`. |
 | 11 | Traefik dynamic config edits don't apply | Windows bind-mount inotify doesn't propagate → file provider doesn't reload. | `docker restart <traefik>` after editing dynamic config. |
+| 12 | After upgrading to v4.20.2 the login page is **all English** although the switcher shows "Tiếng Việt" and the locale resolves to `vi` | Core's hosted translations for `vi` are its full English default set (304 keys), and Login V2 merges hosted translations **last**, overwriting `vi.json`. | Edit 5: merge `vi.json` after the hosted set for `vi`. Verify by reading page text, not the switcher. Cost: `vi` strings no longer editable via Console/API (§9.1). |
+| 13 | Two different images behind one tag; no way to tell which one a host runs | CI wrote `:<ver>` and `:latest` on every build, so the fix build overwrote the tag of the broken one. | Immutable `<ver>-vi.<N>` per build, CI refuses to overwrite; deploy `<tag>@sha256:<digest>`; `:latest` for browsing only (§9.6). |
+| 14 | Once `vi.json` started winning (Issue #12), the login showed **another project's name** ("Sign in with <old project>") | The name had been hard-coded in `vi.json` and was hidden while the English hosted set overwrote it. | Strings carry no product name; brand comes from `LOGIN_BRAND_NAME` at runtime with a brand-free fallback (edit 6). After any merge-order change, grep the strings for names. |
 
 ---
 
@@ -394,6 +488,11 @@ project can reuse or re-translate.
   passwordless login on V2 succeeds.
 - Google: button on V2 login → `/idps/callback` round-trip → JIT user provisioned.
 - Each OIDC client login + logout (web + native custom-tab).
+- Login V2 pages in Vietnamese with **no English string left**; page title shows
+  your `LOGIN_BRAND_NAME` (or the brand-free fallback).
+- `/ui/login*` returns 404 at the proxy (§9.9).
+- Running images are pinned by digest: `docker inspect <container> --format '{{.Image}}'`
+  equals the digest you deployed.
 
 ## 12. Gotchas to carry forward
 
@@ -402,26 +501,29 @@ project can reuse or re-translate.
 - One RP-ID domain for all apps (login always on `auth.<domain>`).
 - Console is admin-only UX; build user-facing security yourself.
 - Prod parity: carry `--tlsMode external`, the proxy + login container, real SMTP.
+- Pin core and login by version (login by digest); upgrade them together (§9.7).
+- Block `/ui/login*` at the proxy; set `ZITADEL_SESSION_COOKIE_SECRET` (§9.9).
 
 ---
 
 ## 13. Production deployment notes (carry-over, not blockers)
 
-`docker-compose.prod.yml` now carries all the pieces (Traefik file provider, the
-`zitadel-login` container, `--tlsMode external`, the API SA-key mount). These are
-**one-time first-deploy steps** the compose can't do for you — also noted in the
-compose comments:
+Once your production compose carries all the pieces (proxy, the `zitadel-login`
+container, `--tlsMode external`, the backend's SA-key mount), these are the
+**one-time first-deploy steps** the compose can't do for you:
 
-1. **Tunnel ingress.** In the Cloudflare Zero Trust dashboard, point the prod
-   tunnel ingress `auth.<domain>` → `traefik:80` (not straight to `zitadel:8080`,
-   else `/ui/v2/login/*` won't route to the login app).
-2. **Bootstrap with the right flags.** Run
-   `bootstrap_zitadel.py … --login-client --enable-login-v2 --social-idps` so
-   `deploy/secrets/login-client.pat` is written (the Login V2 container needs it)
-   and `loginV2.required=true` is set on the prod instance. Without this, login
-   falls back to the broken V1 hosted UI (breaks passwordless + Google callback).
-3. **Auth domain in Traefik.** If the prod auth domain ≠ `auth.vitacell.net`,
-   update the `Host(...)` rule in `deploy/traefik/dynamic.yml` (two routers).
-4. **Real SMTP.** Configure a real SMTP provider for password-reset / verification
-   emails — dev used Mailpit (catch-all, no delivery). Set it via Zitadel SMTP
-   settings (Admin API / Console) so `/me/security/password/reset-email` delivers.
+1. **Tunnel ingress.** Point the production tunnel ingress `auth.<domain>` →
+   `traefik:80` (not straight to `zitadel:8080`, else `/ui/v2/login/*` won't route
+   to the login app).
+2. **Bootstrap with the right flags.** Run your bootstrap so the login client PAT
+   file is written (the Login V2 container needs it) and `loginV2.required=true` is
+   set on the production instance. Without this, login falls back to the V1 hosted
+   UI (breaks passwordless + Google callback).
+3. **Auth domain in the proxy.** Use your production `auth.<domain>` in the
+   `Host(...)` rules of both routers.
+4. **Secrets.** `ZITADEL_MASTERKEY` (must be the key the DB was initialised with) and
+   `ZITADEL_SESSION_COOKIE_SECRET` live only in the production env / secret store.
+5. **Real SMTP.** Configure a real SMTP provider for password-reset / verification
+   emails (a dev catch-all such as Mailpit delivers nothing). Set it via Zitadel SMTP
+   settings (Admin API / Console). From v4.20.0 (Go 1.26), Zitadel rejects some
+   certificate chains for outbound TLS, SMTP included — check your provider's chain.

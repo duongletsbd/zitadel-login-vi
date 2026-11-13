@@ -1,7 +1,7 @@
 {
   "common": {
     "back": "Quay lại",
-    "title": "Đăng nhập với Tuệ Tâm"
+    "title": "Đăng nhập"
   },
   "accounts": {
     "title": "Tài khoản",
@@ -324,7 +324,7 @@
       "description": "Cung cấp email, họ và tên để đăng ký."
     },
     "title": "Đăng ký",
-    "description": "Tạo tài khoản Tuệ Tâm của bạn.",
+    "description": "Tạo tài khoản của bạn.",
     "noMethodAvailableWarning": "Không có phương thức xác thực nào khả dụng. Vui lòng liên hệ quản trị viên.",
     "selectMethod": "Chọn phương thức bạn muốn dùng để xác thực",
     "agreeTo": "Để đăng ký, bạn phải đồng ý với các điều khoản và điều kiện",
