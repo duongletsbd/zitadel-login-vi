@@ -6,10 +6,14 @@ passkey/password self-service). Covers architecture, exact config, the API surfa
 used, and **every issue hit + its fix** so the next project skips the pain. File
 paths and names in the examples are from an example implementation — adapt them.
 
-Verified stack: Zitadel core **v4.20.2** + this repo's Login V2 image built from
-**v4.20.2** (Next.js 16), Postgres 16, Traefik v3, Cloudflare Tunnel, a Python
-(FastAPI) backend, Flutter (web/PWA) + Next.js frontends. First written against
-v4.15.3; re-checked on **v4.20.2 on 13/11/2026** (see §9.9 for what changed).
+Stack: Zitadel core + this repo's Login V2 image (Next.js 16), Postgres 16,
+Traefik v3, Cloudflare Tunnel, a Python (FastAPI) backend, Flutter (web/PWA) +
+Next.js frontends. **Provenance:** first written from field notes on **v4.15.3**
+(end-to-end: passkeys, Google IdP, all clients). On **13/11/2026** core + login were
+upgraded to **v4.20.2** and re-measured *without* the backend/frontends: core setup
+log, discovery, JWKS, Console `environment.json`, CORS, Login V1 paths, every Login
+V2 page's language, hosted translations, the `vi`/brand overlay. Statements not
+re-measured on v4.20.2 are v4.15.3 field notes unless they cite a source.
 
 ---
 
@@ -56,8 +60,11 @@ zitadel:
   + bootstrap read it.
 - **Pin the core version and upgrade core + login together.** `:latest` silently
   moves you across releases that change setup steps, cookies and security
-  behaviour (e.g. 4.18.0 shipped a broken setup step; 4.19.2 signs Login V2
-  cookies). Upgrade order: back up the DB → core → wait for "setup completed" in the
+  behaviour — e.g. the [v4.18.0 release note](https://github.com/zitadel/zitadel/releases/tag/v4.18.0)
+  says "Please skip this release … The setup step fails in this version"
+  ([issue #12780](https://github.com/zitadel/zitadel/issues/12780)), and
+  [v4.19.2](https://github.com/zitadel/zitadel/releases/tag/v4.19.2) started signing
+  the Login V2 session cookie (everyone signs in again once). Upgrade order: back up the DB → core → wait for "setup completed" in the
   log → login image of the same version.
 
 ---
@@ -110,7 +117,7 @@ Login V2 is a **separate container**; enabling it has THREE parts:
    NEXT_PUBLIC_BASE_PATH: /ui/v2/login
    ZITADEL_SERVICE_USER_TOKEN_FILE: /etc/login/login-client.pat
    CUSTOM_REQUEST_HEADERS: "x-zitadel-public-host:auth.<d>,Host:auth.<d>"  # outbound→core, so it resolves the instance
-   ZITADEL_SESSION_COOKIE_SECRET: ${ZITADEL_SESSION_COOKIE_SECRET}         # v4.19.5+: required, ≥32 chars (§9.9)
+   ZITADEL_SESSION_COOKIE_SECRET: ${ZITADEL_SESSION_COOKIE_SECRET}         # v4.19.2+: set it, ≥32 chars (§9.9)
    ```
 2. **Service user** = a machine user with the **`IAM_LOGIN_CLIENT`** role; mint a
    PAT, write to the file mounted above.
@@ -317,7 +324,7 @@ already present (running the script twice is a no-op):
    `{ } < >`. Messages are ICU-formatted by next-intl: those characters render the
    *key name* (`common.title`) instead of the text whenever a caller passes values,
    and ICU quoting (`'…'`) breaks the calls that pass none (measured with
-   use-intl 4.15.1). `'` and `#` are safe unquoted. React escapes HTML, so this rule
+   use-intl 4.13.6 — the version v4.20.2's lockfile pins — and 4.15.1, same result). `'` and `#` are safe unquoted. React escapes HTML, so this rule
    is about rendering, not XSS.
 
 **The real gotcha behind edits 2 & 3 (the intersection):** both files intersect
@@ -380,8 +387,9 @@ docker build -t zitadel-login-vi:v4.20.2-local --build-arg ZITADEL_VERSION=v4.20
   (`up -d --no-deps --force-recreate zitadel-login`).
 - **Rollback** = point the service at the previous pinned `-vi.<N>@sha256:` (or the
   stock `ghcr.io/zitadel/zitadel-login:<same ver as core>`, which loses Vietnamese)
-  and recreate it. Login is stateless apart from the signed session cookie — users
-  may have to sign in again; core and its DB are untouched.
+  and recreate it. Recreating only `zitadel-login` leaves core and its DB running
+  untouched (done three times on 13/11/2026). Whether users must sign in again
+  depends on the cookie secret (§9.9).
 
 Verify: open `https://auth.<d>/ui/v2/login` → renders Vietnamese by default; switcher
 lists "Tiếng Việt"; an English-locale browser still shows Vietnamese; the cookie
@@ -397,7 +405,8 @@ docker run --rm --entrypoint sh <image> \
 ### 9.7 Version-pin upgrade (future Zitadel bump)
 **Pin both images; upgrade core and login together.** Do not let the server track
 `zitadel:latest`: core releases change setup steps, cookie signing and security
-checks that the login app must match (v4.19.5 even added a required login env var).
+checks that the login app must match (v4.19.2 added a login env var for cookie
+signing, see §9.9).
 1. Read the release notes + security advisories between your version and the target.
 2. Bump `DEFAULT_ZITADEL_VERSION` (and the dispatch default) in the workflow and the
    `ARG ZITADEL_VERSION` default in the `Dockerfile`; push ⇒ CI builds
@@ -424,16 +433,31 @@ Nothing in the fork names a product: the brand comes from `LOGIN_BRAND_NAME` at
 runtime (edit 6), so the same image serves any project.
 
 ### 9.9 v4.19+ / v4.20 notes (checked on v4.20.2, 13/11/2026)
-- **`ZITADEL_SESSION_COOKIE_SECRET` is required on the login container** (v4.19.5+;
-  it protects passkey setup, verification and invite steps). Generate ≥ 32 random
-  characters (e.g. `openssl rand -base64 48`), keep it **only in the env file /
-  secret store**, use the **same value on every login replica**. Too short ⇒ the
-  login's `/ready` fails. Login cookies are signed since v4.19.2 ⇒ everyone signs in
-  again once after the upgrade.
-- **Block Login V1 (`/ui/login*`) at the proxy.** `loginV2.required=true` does not
-  stop requests to the V1 paths (several 2026 advisories hit V1 only). Measured on
-  v4.20.2 without a block: `/ui/login` → 301, `/ui/login/login` → 302 into Console,
-  i.e. V1 still answers. Traefik rule for the core router:
+- **Set `ZITADEL_SESSION_COOKIE_SECRET` on the login container.** Per the
+  [v4.19.2](https://github.com/zitadel/zitadel/releases/tag/v4.19.2) /
+  [v4.19.5](https://github.com/zitadel/zitadel/releases/tag/v4.19.5) /
+  [v4.20.0](https://github.com/zitadel/zitadel/releases/tag/v4.20.0) release notes:
+  v4.19.2 signs the Login V2 session cookie with it; v4.19.5 extends it to email and
+  invite verification, passkey registration and IdP linking; v4.20.0 to the device
+  code check. It is **not strictly required** — without it the login keeps working,
+  derives the key from its API credential and logs a deprecation warning, and
+  rotating that credential then signs everyone out. When set: ≥ 32 characters
+  (shorter ⇒ the login reports not ready — `MIN_SESSION_COOKIE_SECRET_LENGTH = 32`
+  in `apps/login/src/lib/session-cookie-signature.ts`), **the same value on every
+  replica**, a comma-separated list allows rotation without signing users out.
+  Generate it (`openssl rand -base64 32` or longer), keep it **only in the env file /
+  secret store**, never reuse a value from an example config. Existing unsigned
+  cookies are ignored ⇒ everyone signs in again once after upgrading to v4.19.2+.
+- **Block Login V1 (`/ui/login*`) at the proxy.** Login V1 is the legacy UI and
+  still answers even with `loginV2.required=true` — block it to shrink the attack
+  surface. Measured on v4.20.2 without a block: `/ui/login` → 301,
+  `/ui/login/login` → 302 into Console. Two advisories show what V1 alone exposes:
+  [GHSA-72q5-mv5c-vxv4](https://github.com/zitadel/zitadel/security/advisories/GHSA-72q5-mv5c-vxv4)
+  (unauthenticated MFA enrolment / phone overwrite; "affects **Login V1** only",
+  fixed 4.17.1) and
+  [GHSA-4hgj-wm6c-q7p2](https://github.com/zitadel/zitadel/security/advisories/GHSA-4hgj-wm6c-q7p2)
+  (unauthenticated rename of any user; "Login V2 … is not vulnerable through it",
+  fixed 4.19.1). Traefik rule for the core router:
   ```yaml
   zitadel: { rule: "Host(`auth.<d>`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/ui/login`)", … }
   ```
@@ -447,7 +471,9 @@ runtime (edit 6), so the same image serves any project.
   core's `Access-Control-Allow-Origin` or only adds a second header.
 - **Phone claim name** is `phone_number` / `phone_number_verified` (scope `phone`,
   via `/oidc/v1/userinfo` or introspection; `claims_supported` in discovery lists
-  them). Access tokens do not carry it.
+  them; measured 13/11/2026). Per the
+  [Zitadel claims docs](https://zitadel.com/docs/apis/openidoauth/claims) access
+  tokens do not carry it — not re-measured.
 - **Measuring hosted translations from a script:** call
   `zitadel.settings.v2.SettingsService/GetHostedLoginTranslation` with
   `{ "instance": true, "locale": "vi" }` and the instance's public host in both
@@ -474,7 +500,7 @@ runtime (edit 6), so the same image serves any project.
 | 10 | Whole stack 502 after Docker Desktop restart | Docker Desktop host port-forwards go stale (TCP accepts, data dropped mid-handshake) — affects Traefik AND Postgres/pgbouncer. | `docker compose up -d --force-recreate traefik postgres pgbouncer`. |
 | 11 | Traefik dynamic config edits don't apply | Windows bind-mount inotify doesn't propagate → file provider doesn't reload. | `docker restart <traefik>` after editing dynamic config. |
 | 12 | After upgrading to v4.20.2 the login page is **all English** although the switcher shows "Tiếng Việt" and the locale resolves to `vi` | Core's hosted translations for `vi` are its full English default set (304 keys), and Login V2 merges hosted translations **last**, overwriting `vi.json`. | Edit 5: merge `vi.json` after the hosted set for `vi`. Verify by reading page text, not the switcher. Cost: `vi` strings no longer editable via Console/API (§9.1). |
-| 13 | Two different images behind one tag; no way to tell which one a host runs | CI wrote `:<ver>` and `:latest` on every build, so the fix build overwrote the tag of the broken one. | Immutable `<ver>-vi.<N>` per build, CI refuses to overwrite; deploy `<tag>@sha256:<digest>`; `:latest` for browsing only (§9.6). |
+| 13 | Risk of two different images behind one tag (no way to tell which one a host runs) | The old CI wrote `:<ver>` and `:latest` on every build. On 13/11/2026 the fix build would have overwritten `:v4.20.2` (the English-only build) and did move `:latest` to the new image; `:v4.20.2` was saved only because the workflow was changed first. | Immutable `<ver>-vi.<N>` per build, CI refuses to overwrite; deploy `<tag>@sha256:<digest>`; `:latest` for browsing only (§9.6). |
 | 14 | Once `vi.json` started winning (Issue #12), the login showed **another project's name** ("Sign in with <old project>") | The name had been hard-coded in `vi.json` and was hidden while the English hosted set overwrote it. | Strings carry no product name; brand comes from `LOGIN_BRAND_NAME` at runtime with a brand-free fallback (edit 6). After any merge-order change, grep the strings for names. |
 
 ---
@@ -525,5 +551,7 @@ container, `--tlsMode external`, the backend's SA-key mount), these are the
    `ZITADEL_SESSION_COOKIE_SECRET` live only in the production env / secret store.
 5. **Real SMTP.** Configure a real SMTP provider for password-reset / verification
    emails (a dev catch-all such as Mailpit delivers nothing). Set it via Zitadel SMTP
-   settings (Admin API / Console). From v4.20.0 (Go 1.26), Zitadel rejects some
-   certificate chains for outbound TLS, SMTP included — check your provider's chain.
+   settings (Admin API / Console). Per the
+   [v4.20.0 release note](https://github.com/zitadel/zitadel/releases/tag/v4.20.0)
+   (Go 1.26), outbound TLS — SMTP included — no longer accepts chains through the
+   compromised eMudhra intermediate CAs; check your provider's chain.

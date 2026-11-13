@@ -152,7 +152,8 @@ edit("apps/login/src/i18n/request.ts", {
 //    Valid name: trimmed, control characters removed, 1–40 characters, and no
 //    `{ } < >` (next-intl parses messages as ICU: those characters break
 //    formatting whenever a caller passes values, and quoting them breaks the
-//    calls that pass none — measured with use-intl 4.15). Missing/invalid ⇒
+//    calls that pass none — measured with use-intl 4.13.6 (pinned by v4.20.2)
+//    and 4.15.1). Missing/invalid ⇒
 //    brand-free wording, so nothing names another product.
 //    6a declares the helper before `return`; 6b adds it as the last merge source.
 edit("apps/login/src/i18n/request.ts", {
