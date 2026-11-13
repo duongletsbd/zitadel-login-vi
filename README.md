@@ -8,8 +8,12 @@ defaulted in the Login V2 screens without a custom login image. This repo bakes 
 into the login UI at build time via a tiny, anchor-based source overlay applied to a
 **pinned upstream release** — no whole-repo fork to maintain.
 
-- **Prebuilt image:** `ghcr.io/duongletsbd/zitadel-login-vi:<zitadel-version>`
-  (e.g. `:v4.15.3`, plus `:latest`) — built & pushed by CI on every tag/push.
+- **Prebuilt image:** `ghcr.io/duongletsbd/zitadel-login-vi:<zitadel-version>-vi.<N>`
+  (e.g. `:v4.20.2-vi.3`) — built & pushed by CI on every tag/push. Each tag is
+  **immutable** (N = CI run number; CI refuses to overwrite). Pin it with its digest
+  (`…:v4.20.2-vi.3@sha256:…`, shown in the run summary). `:latest` moves with every
+  build — browsing only, never deploy it. Older plain tags (`:v4.15.3`, `:v4.20.2`)
+  are left as they were and are no longer written.
 - **Pinned upstream:** `zitadel/zitadel` (the login image is versioned in lock-step
   with the server — match it to your running Zitadel).
 - **Approach:** source rebuild (not a runtime `FROM …` overlay) — see _Why a rebuild_.
@@ -21,7 +25,7 @@ Point your `zitadel-login` service at this image and set the default locale:
 ```yaml
 # docker-compose.*.yml
 zitadel-login:
-  image: ghcr.io/duongletsbd/zitadel-login-vi:v4.15.3
+  image: ghcr.io/duongletsbd/zitadel-login-vi:v4.20.2-vi.<N>@sha256:<digest>
   environment:
     LOGIN_DEFAULT_LOCALE: vi              # hard default to Vietnamese (see below)
     ZITADEL_API_URL: http://zitadel:8080

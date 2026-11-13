@@ -3,7 +3,8 @@
 // Vietnamese fork of the Login V2 UI. Run from the monorepo root (the Dockerfile
 // runs it right after `git clone` of the pinned release tag).
 //
-// It performs four idempotent, anchor-based source edits. Each FAILS LOUDLY if
+// It performs five idempotent, anchor-based source edits (5 = vi.json wins
+// over core's hosted translations for `vi`, see edit 5 below). Each FAILS LOUDLY if
 // its anchor text is missing, which is the signal that the upstream source
 // moved and this script must be re-checked against the new release tag.
 //
@@ -121,6 +122,24 @@ edit("apps/login/src/i18n/request.ts", {
   anchor: "  if (languageHeader) {",
   mode: "replace",
   replacement: "  if (languageHeader && !process.env.LOGIN_DEFAULT_LOCALE) {",
+});
+
+// 5) request.ts: for `vi`, merge vi.json AFTER the hosted translations.
+//    WHY: Zitadel core does not know `vi`, so GetHostedLoginTranslation for
+//    locale `vi` returns core's full English default set (measured on v4.20.2:
+//    304 keys, "Welcome back!"…). Upstream merges hosted translations last, so
+//    that English set overwrote every vi.json string. Other locales keep the
+//    upstream order (hosted translations still win there).
+edit("apps/login/src/i18n/request.ts", {
+  marker: 'locale === "vi"\n      ? mergeMessages(fallbackMessages, customMessages, localeMessages)',
+  anchor:
+    "    messages: mergeMessages(fallbackMessages, localeMessages, customMessages) as Record<string, string>,",
+  mode: "replace",
+  replacement:
+    "    // Tue Tam fork: vi.json wins over core's English hosted set for `vi`.\n" +
+    "    messages: (locale === \"vi\"\n" +
+    "      ? mergeMessages(fallbackMessages, customMessages, localeMessages)\n" +
+    "      : mergeMessages(fallbackMessages, localeMessages, customMessages)) as Record<string, string>,",
 });
 
 console.log("[✓] Vietnamese fork overlay applied");

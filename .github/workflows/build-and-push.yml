@@ -1,9 +1,17 @@
 name: build-and-push
 
 # Builds the Vietnamese Login V2 image and pushes it to GHCR.
-#   - push a tag `v*`      -> builds that version, tags the image `:<ver>` + `:latest`
-#   - push to `main`       -> rebuilds the default version (keeps `:latest` fresh)
+#   - push a tag `v*`      -> builds that Zitadel version
+#   - push to `main`       -> builds the default version
 #   - manual dispatch      -> build any Zitadel version on demand
+#
+# Every build gets an IMMUTABLE tag `<ver>-vi.<N>` (N = this workflow's run
+# number, strictly increasing). The job refuses to push if that tag already
+# exists (e.g. a re-run of the same run), so a published tag never changes.
+# `:latest` still moves to the newest build — for browsing only; deployments
+# pin `<ver>-vi.<N>@sha256:<digest>` (printed in the run summary).
+# Plain `:<ver>` tags (e.g. `:v4.15.3`, `:v4.20.2`) are no longer written; the
+# existing ones are left as they are.
 on:
   push:
     branches: [main]
@@ -45,8 +53,12 @@ jobs:
           else
             VER="${DEFAULT_ZITADEL_VERSION}"
           fi
+          if ! printf '%s' "$VER" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'${VER}' is not a Zitadel release tag (vX.Y.Z)"; exit 1
+          fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "build_tag=${VER}-vi.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -58,7 +70,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Immutable tags: never overwrite a published `<ver>-vi.<N>`.
+      - name: Refuse existing tag
+        env:
+          REF: ghcr.io/${{ steps.ver.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.build_tag }}
+        run: |
+          if docker buildx imagetools inspect "$REF" >/dev/null 2>&1; then
+            echo "::error::${REF} already exists — tags are immutable, start a new run instead of re-running"; exit 1
+          fi
+
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -66,7 +88,25 @@ jobs:
           build-args: |
             ZITADEL_VERSION=${{ steps.ver.outputs.version }}
           tags: |
-            ghcr.io/${{ steps.ver.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ steps.ver.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.build_tag }}
             ghcr.io/${{ steps.ver.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Summary (pin this)
+        env:
+          IMG: ghcr.io/${{ steps.ver.outputs.owner_lc }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ steps.ver.outputs.build_tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### zitadel-login-vi"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Zitadel | \`${{ steps.ver.outputs.version }}\` |"
+            echo "| Tag | \`${TAG}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Pin | \`${IMG}:${TAG}@${DIGEST}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PIN=${IMG}:${TAG}@${DIGEST}"

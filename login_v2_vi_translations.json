@@ -47,7 +47,7 @@
       "userNotFound": "Không tìm thấy người dùng trong hệ thống",
       "couldNotCreateSession": "Không thể tạo phiên cho người dùng",
       "initialUserNotSupported": "Người dùng khởi tạo không được hỗ trợ",
-      "usernamePasswordNotAllowed": "Không cho phép đăng nhập bằng tên người dùng và mật khẩu! Vui lòng liên hệ quản trị viên để biết thêm thông tin.",
+      "localAuthenticationNotAllowed": "Không cho phép xác thực cục bộ! Vui lòng liên hệ quản trị viên để biết thêm thông tin.",
       "passkeysNotAllowed": "Không cho phép sử dụng khóa truy cập! Vui lòng liên hệ quản trị viên để biết thêm thông tin.",
       "couldNotFindIdentityProvider": "Không tìm thấy nhà cung cấp danh tính.",
       "userNotActive": "Người dùng không hoạt động. Vui lòng liên hệ quản trị viên để biết thêm thông tin."
@@ -108,14 +108,17 @@
       "description": "Đặt mật khẩu cho tài khoản của bạn",
       "submit": "Tiếp tục",
       "labels": {
+        "currentPassword": "Mật khẩu hiện tại",
         "newPassword": "Mật khẩu mới",
         "confirmPassword": "Xác nhận mật khẩu"
       },
       "required": {
+        "currentPassword": "Bạn phải nhập mật khẩu hiện tại!",
         "newPassword": "Bạn phải nhập mật khẩu mới!",
         "confirmPassword": "Trường này là bắt buộc"
       },
       "errors": {
+        "currentPasswordInvalid": "Mật khẩu hiện tại không đúng.",
         "couldNotChangePassword": "Không thể đổi mật khẩu",
         "couldNotVerifyPassword": "Không thể xác minh mật khẩu",
         "unknownError": "Lỗi không xác định"
@@ -147,7 +150,10 @@
       "couldNotLoadSession": "Không thể tải phiên",
       "couldNotLoadAuthMethods": "Không thể tải các phương thức xác thực",
       "failedPrecondition": "Điều kiện tiên quyết không được đáp ứng",
-      "sessionNotValid": "Phiên không hợp lệ"
+      "sessionNotValid": "Phiên không hợp lệ",
+      "passwordVerificationMissing": "Chưa xác minh mật khẩu.",
+      "passwordVerificationTooOld": "Lần xác minh mật khẩu đã quá lâu. Vui lòng xác minh lại mật khẩu.",
+      "passwordResetNotAllowed": "Không cho phép đặt lại mật khẩu. Vui lòng liên hệ quản trị viên để biết thêm thông tin."
     }
   },
   "idp": {
@@ -159,18 +165,7 @@
     "signInWithAzureAD": "Đăng nhập với AzureAD",
     "signInWithGithub": "Đăng nhập với GitHub",
     "signInWithGitlab": "Đăng nhập với GitLab",
-    "loginSuccess": {
-      "title": "Đăng nhập thành công",
-      "description": "Bạn đã đăng nhập thành công!"
-    },
-    "linkingSuccess": {
-      "title": "Đã liên kết tài khoản",
-      "description": "Bạn đã liên kết tài khoản thành công!"
-    },
-    "registerSuccess": {
-      "title": "Đăng ký thành công",
-      "description": "Bạn đã đăng ký thành công!"
-    },
+    "signInWithZitadel": "Đăng nhập bằng Zitadel",
     "loginError": {
       "title": "Đăng nhập thất bại",
       "description": "Đã xảy ra lỗi khi cố gắng đăng nhập."
@@ -194,6 +189,23 @@
       "description": "Chúng tôi không thể hoàn tất quá trình đăng ký.",
       "info": "Không thể xác định tổ chức để đăng ký. Vui lòng liên hệ quản trị viên để được hỗ trợ.",
       "backToLogin": "Quay lại đăng nhập"
+    },
+    "processing": {
+      "message": "Đang xử lý xác thực...",
+      "noRedirect": "Máy chủ không trả về trang chuyển tiếp hay thông báo lỗi",
+      "unexpectedError": "Đã xảy ra lỗi ngoài dự kiến"
+    },
+    "errors": {
+      "missingParameters": "Thiếu tham số bắt buộc",
+      "missingIdpInfo": "Thiếu thông tin nhà cung cấp danh tính",
+      "idpNotFound": "Không tìm thấy nhà cung cấp danh tính",
+      "linkingNotAllowed": "Không cho phép liên kết với nhà cung cấp danh tính này",
+      "linkingFailed": "Liên kết nhà cung cấp danh tính với tài khoản thất bại",
+      "autoLinkingFailed": "Tự động liên kết tài khoản thất bại",
+      "userCreationFailed": "Tạo tài khoản người dùng thất bại",
+      "orgResolutionFailed": "Không thể xác định tổ chức để đăng ký",
+      "sessionCreationFailed": "Không thể tạo phiên hoặc xác định trang chuyển tiếp",
+      "unknownError": "Đã xảy ra lỗi không xác định"
     }
   },
   "ldap": {
@@ -250,6 +262,10 @@
       "required": {
         "code": "Trường này là bắt buộc"
       }
+    },
+    "errors": {
+      "couldNotRequestChallenge": "Không thể gửi mã xác thực một lần",
+      "couldNotVerifyCode": "Không thể xác minh mã xác thực một lần"
     }
   },
   "passkey": {
@@ -257,7 +273,20 @@
       "title": "Xác thực bằng khóa truy cập",
       "description": "Thiết bị của bạn sẽ yêu cầu vân tay, khuôn mặt hoặc khóa màn hình",
       "usePassword": "Dùng mật khẩu",
-      "submit": "Tiếp tục"
+      "submit": "Tiếp tục",
+      "errors": {
+        "couldNotRequestChallenge": "Không thể bắt đầu xác minh khóa truy cập",
+        "couldNotVerifyPasskey": "Không thể xác minh khóa truy cập",
+        "noResponseReceived": "Xác minh khóa truy cập thất bại - không nhận được phản hồi",
+        "noRedirectProvided": "Đã xác minh khóa truy cập nhưng không có trang chuyển tiếp",
+        "couldNotRetrievePasskey": "Đã xảy ra lỗi khi lấy khóa truy cập",
+        "verificationCancelled": "Đã hủy xác minh khóa truy cập",
+        "verificationFailed": "Đã xảy ra lỗi khi xác minh khóa truy cập",
+        "couldNotFindSession": "Không tìm thấy phiên",
+        "couldNotUpdateSession": "Không thể cập nhật phiên",
+        "userNotFound": "Không tìm thấy người dùng trong hệ thống",
+        "couldNotDetermineRedirect": "Không thể xác định trang chuyển tiếp sau khi xác minh khóa truy cập"
+      }
     },
     "set": {
       "title": "Thiết lập khóa truy cập",
@@ -360,6 +389,7 @@
     "userIdMissing": "Không có userId được cung cấp!",
     "successTitle": "Đã xác minh người dùng",
     "successDescription": "Người dùng đã được xác minh thành công.",
+    "successContinue": "Tiếp tục",
     "setupAuthenticator": "Thiết lập trình xác thực",
     "verify": {
       "title": "Xác minh người dùng",
@@ -388,7 +418,8 @@
       "userAlreadyVerified": "Người dùng đã được xác minh!",
       "couldNotResendInvite": "Không thể gửi lại lời mời",
       "inviteSendFailed": "Gửi email mời thất bại",
-      "emailSendFailed": "Gửi email xác minh thất bại"
+      "emailSendFailed": "Gửi email xác minh thất bại",
+      "contextMissing": "Đã xảy ra lỗi. Vui lòng thử lại."
     }
   },
   "authenticator": {
@@ -396,7 +427,15 @@
     "description": "Chọn phương thức bạn muốn dùng để xác thực",
     "noMethodsAvailable": "Không có phương thức xác thực nào khả dụng",
     "allSetup": "Bạn đã thiết lập một trình xác thực rồi!",
-    "linkWithIDP": "hoặc liên kết với một Nhà cung cấp danh tính"
+    "linkWithIDP": "hoặc liên kết với một Nhà cung cấp danh tính",
+    "methods": {
+      "totp": "Ứng dụng xác thực",
+      "u2f": "Khóa bảo mật (U2F)",
+      "otpEmail": "Mã qua email",
+      "otpSms": "Mã qua SMS",
+      "passkey": "Khóa truy cập",
+      "password": "Mật khẩu"
+    }
   },
   "device": {
     "usercode": {
@@ -414,6 +453,7 @@
       "title": "{appName} muốn kết nối",
       "description": "{appName} sẽ có quyền truy cập vào:",
       "disclaimer": "Bằng cách nhấn Cho phép, bạn cho phép {appName} và Zitadel sử dụng thông tin của bạn theo các điều khoản dịch vụ và chính sách bảo mật tương ứng. Bạn có thể thu hồi quyền truy cập này bất cứ lúc nào.",
+      "usercode": "Mã hiển thị trên thiết bị của bạn:",
       "submit": "Cho phép",
       "deny": "Từ chối"
     },
@@ -430,6 +470,8 @@
     "unknownContext": "Không thể lấy ngữ cảnh của người dùng. Hãy chắc chắn nhập tên người dùng trước hoặc cung cấp loginName làm tham số tìm kiếm.",
     "sessionExpired": "Phiên hiện tại của bạn đã hết hạn. Vui lòng đăng nhập lại.",
     "failedLoading": "Tải dữ liệu thất bại. Vui lòng thử lại.",
-    "tryagain": "Thử lại"
+    "tryagain": "Thử lại",
+    "couldNotContinueSession": "Không thể tiếp tục phiên - thiếu thông tin người dùng",
+    "couldNotClearSession": "Không thể kết thúc phiên. Vui lòng thử lại."
   }
 }
